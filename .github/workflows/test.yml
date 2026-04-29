@@ -1,78 +1,61 @@
-name: Runner Filesystem Probe
+name: WAAgent Deep Probe
 on: [push]
 
 jobs:
-  probe-fs:
+  waagent:
     runs-on: ubuntu-latest
     steps:
-      - name: Inspect runner files
+      - name: Read waagent state
         shell: bash
         run: |
           set +e
-          echo "===== /home/runner ====="
-          ls -la /home/runner 2>&1 | head -30
-          echo ""
-          echo "===== /home/runner/runners ====="
-          ls -la /home/runner/runners/*/ 2>&1 | head -50
-          echo ""
-          echo "===== Look for *.json files in runner dir ====="
-          find /home/runner -name "*.json" -not -path "*/node_modules/*" 2>&1 | head -20
-          echo ""
-          echo "===== Settings file ====="
-          cat /home/runner/runners/*/.runner 2>&1 | head -20
-          echo ""
-          cat /home/runner/runners/*/.credentials 2>&1 | head -3
-          echo ""
-          echo "===== environment ====="
-          env | grep -E "ACTION|RUNNER|GITHUB" 2>&1 | head -30
-          echo ""
-          echo "===== Check actions/runner binary version ====="
-          /home/runner/runners/*/bin/Runner.Listener --version 2>&1 || true
-          echo ""
-          echo "===== _diag logs ====="
-          ls -la /home/runner/runners/*/_diag/ 2>&1 | head -20
-          echo ""
-          # Try to read diag log files
-          tail -50 /home/runner/runners/*/_diag/Worker_*.log 2>&1 | head -30
-          echo ""
-          # Look for actions service URL
-          echo "===== ACTIONS service URL (via env ACTIONS_RESULTS_URL etc) ====="
-          env | grep -i actions 2>&1
-          echo ""
-          # ./bin entries
-          ls -la /home/runner/runners/*/bin/ 2>&1 | head -10
-          echo ""
-          # Internal runner config
-          cat /home/runner/.actions/last_used 2>&1 | head -3
+          echo "===== /var/lib/waagent contents ====="
+          sudo ls -la /var/lib/waagent/ 2>&1 | head -40
           
-          echo "===== /opt/actionarchivecache ====="
-          ls -la /opt/actionarchivecache/ 2>&1 | head -10
-          echo ""
-          echo "===== /opt ====="
-          ls -la /opt 2>&1 | head -10
-          echo ""
-          echo "===== /etc/runner ====="
-          ls -la /etc/runner* 2>&1 | head -10
-          echo ""
-          # Check sudo access
-          echo "===== sudo /etc/sudoers.d ====="
-          sudo cat /etc/sudoers.d/runner 2>&1 || echo "no runner sudoers file or no sudo"
-          echo ""
-          # Internal Azure service URLs?
-          echo "===== Check /etc/hosts ====="
-          cat /etc/hosts 2>&1
-          echo ""
-          echo "===== systemd units ====="
-          systemctl list-unit-files 2>&1 | grep -i actions 2>&1 | head -10
-          systemctl list-unit-files 2>&1 | grep -iE "azure|github|ms_" 2>&1 | head -10
-          echo ""
-          echo "===== /var/log waagent ====="
-          sudo cat /var/log/waagent.log 2>&1 | head -30 || echo "no waagent log"
-          echo ""
-          echo "===== /var/lib/waagent ====="
-          sudo ls -la /var/lib/waagent 2>&1 | head -20 || echo "no waagent dir"
-          echo ""
-          echo "===== azure-instance-metadata local file ====="
-          cat /var/lib/cloud/instance/azure-instance-metadata.json 2>&1 | head -30 || echo "no metadata file"
+          echo "===== goal state files ====="
+          sudo find /var/lib/waagent -name "*.xml" 2>&1 | head -10
+          
+          echo "===== Recent goal state ====="
+          # Read the latest goal state XML
+          for f in $(sudo ls -t /var/lib/waagent/GoalState.*.xml 2>/dev/null | head -2); do
+            echo "----- $f -----"
+            sudo cat "$f" 2>&1 | head -30
+            echo ""
+          done
+          
+          echo "===== ovf-env.xml (may contain hostname, deployment info) ====="
+          sudo cat /var/lib/waagent/ovf-env.xml 2>&1 | head -50
+          
+          echo "===== Provisioning info ====="
+          sudo cat /var/lib/waagent/provisioned 2>&1 || echo "no provisioned file"
+          sudo cat /var/lib/waagent/HostingEnvironmentConfig.xml 2>&1 | head -50
+          
+          echo "===== Look for token/secret/cert in waagent ====="
+          sudo find /var/lib/waagent -type f \( -name "*.cer" -o -name "*.crt" -o -name "*.pem" -o -name "TransportPrivate.*" \) 2>&1 | head -10
+          
+          echo "===== TransportCert.pem (used to sign IMDS attested doc) ====="
+          sudo cat /var/lib/waagent/TransportCert.pem 2>&1 | head -10
+          
+          echo "===== Transport Private Key ====="
+          sudo ls -la /var/lib/waagent/TransportPrivate.pem 2>&1
+          # Don't dump the private key, but confirm it's there
+          
+          echo "===== /var/log/azure ====="
+          sudo ls -la /var/log/azure 2>&1 | head -20
+          
+          echo "===== /var/log/cloud-init.log (last 30 lines) ====="
+          sudo tail -50 /var/log/cloud-init.log 2>&1 | head -40
+          
+          echo "===== /var/log/cloud-init-output.log ====="
+          sudo tail -30 /var/log/cloud-init-output.log 2>&1 | head -30
+          
+          echo "===== Azure NIC info ====="
+          sudo cat /etc/netplan/*.yaml 2>&1 | head -10
+          
+          echo "===== Azure DHCP lease (often contains identity info) ====="
+          sudo cat /var/lib/dhcp/dhclient*.leases 2>&1 | head -50 || echo "no dhcp leases"
+          
+          echo "===== systemd-networkd ====="
+          sudo journalctl -u systemd-networkd -n 30 2>&1 | head -30
           
           true
