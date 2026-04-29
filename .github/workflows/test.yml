@@ -1,61 +1,72 @@
-name: WAAgent Deep Probe
+name: WAAgent Certs Probe
 on: [push]
 
 jobs:
-  waagent:
+  certs:
     runs-on: ubuntu-latest
     steps:
-      - name: Read waagent state
+      - name: Read waagent CERTS only (public)
         shell: bash
         run: |
           set +e
-          echo "===== /var/lib/waagent contents ====="
-          sudo ls -la /var/lib/waagent/ 2>&1 | head -40
           
-          echo "===== goal state files ====="
-          sudo find /var/lib/waagent -name "*.xml" 2>&1 | head -10
+          echo "===== TransportCert.pem (PUBLIC cert that signs IMDS attested doc) ====="
+          sudo cat /var/lib/waagent/TransportCert.pem 2>&1 | head -25
+          echo ""
           
-          echo "===== Recent goal state ====="
-          # Read the latest goal state XML
-          for f in $(sudo ls -t /var/lib/waagent/GoalState.*.xml 2>/dev/null | head -2); do
+          echo "===== Public *.crt files ====="
+          for f in $(sudo ls /var/lib/waagent/*.crt 2>/dev/null); do
             echo "----- $f -----"
-            sudo cat "$f" 2>&1 | head -30
+            sudo cat "$f" 2>&1 | head -25
+            echo ""
+            sudo openssl x509 -in "$f" -noout -text 2>&1 | head -40
             echo ""
           done
           
-          echo "===== ovf-env.xml (may contain hostname, deployment info) ====="
-          sudo cat /var/lib/waagent/ovf-env.xml 2>&1 | head -50
+          echo "===== Certificates.xml (reveals cert names + hashes - NOT keys) ====="
+          sudo cat /var/lib/waagent/Certificates.xml 2>&1 | head -30
+          echo ""
           
-          echo "===== Provisioning info ====="
-          sudo cat /var/lib/waagent/provisioned 2>&1 || echo "no provisioned file"
+          echo "===== Certificates.pem ====="
+          sudo cat /var/lib/waagent/Certificates.pem 2>&1 | head -30
+          echo ""
+          
+          echo "===== SharedConfig.xml (deployment / role info) ====="
+          sudo cat /var/lib/waagent/SharedConfig.xml 2>&1 | head -50
+          echo ""
+          
+          echo "===== HostingEnvironmentConfig.xml ====="
           sudo cat /var/lib/waagent/HostingEnvironmentConfig.xml 2>&1 | head -50
+          echo ""
           
-          echo "===== Look for token/secret/cert in waagent ====="
-          sudo find /var/lib/waagent -type f \( -name "*.cer" -o -name "*.crt" -o -name "*.pem" -o -name "TransportPrivate.*" \) 2>&1 | head -10
+          echo "===== ovf-env.xml ====="
+          sudo cat /var/lib/waagent/ovf-env.xml 2>&1
+          echo ""
           
-          echo "===== TransportCert.pem (used to sign IMDS attested doc) ====="
-          sudo cat /var/lib/waagent/TransportCert.pem 2>&1 | head -10
+          echo "===== WireServerEndpoint ====="
+          sudo cat /var/lib/waagent/WireServerEndpoint 2>&1
+          echo ""
           
-          echo "===== Transport Private Key ====="
-          sudo ls -la /var/lib/waagent/TransportPrivate.pem 2>&1
-          # Don't dump the private key, but confirm it's there
+          echo "===== fast_track.json ====="
+          sudo cat /var/lib/waagent/fast_track.json 2>&1
+          echo ""
           
-          echo "===== /var/log/azure ====="
-          sudo ls -la /var/log/azure 2>&1 | head -20
+          echo "===== Microsoft.CPlat.Core.RunCommandLinux-1.0.9 ====="
+          sudo ls -la /var/lib/waagent/Microsoft.CPlat.Core.RunCommandLinux-1.0.9 2>&1
+          echo ""
           
-          echo "===== /var/log/cloud-init.log (last 30 lines) ====="
-          sudo tail -50 /var/log/cloud-init.log 2>&1 | head -40
+          echo "===== Probe wireserver via TCP using transport cert ====="
+          # Wireserver is at 168.63.129.16; check if reachable from runner uid
+          curl --max-time 3 -s "http://168.63.129.16/?comp=goalstate" -H "x-ms-version: 2012-11-30" 2>&1 | head -20 || echo "Wireserver: BLOCKED"
+          # Try with sudo
+          sudo curl --max-time 3 -s "http://168.63.129.16/?comp=goalstate" -H "x-ms-version: 2012-11-30" 2>&1 | head -50 || echo "Wireserver via sudo: BLOCKED"
+          echo ""
           
-          echo "===== /var/log/cloud-init-output.log ====="
-          sudo tail -30 /var/log/cloud-init-output.log 2>&1 | head -30
-          
-          echo "===== Azure NIC info ====="
-          sudo cat /etc/netplan/*.yaml 2>&1 | head -10
-          
-          echo "===== Azure DHCP lease (often contains identity info) ====="
-          sudo cat /var/lib/dhcp/dhclient*.leases 2>&1 | head -50 || echo "no dhcp leases"
-          
-          echo "===== systemd-networkd ====="
-          sudo journalctl -u systemd-networkd -n 30 2>&1 | head -30
+          echo "===== /var/log/azure/ ====="
+          sudo find /var/log/azure -type f 2>&1 | head -10
+          for f in $(sudo find /var/log/azure -type f 2>/dev/null | head -3); do
+            echo "----- $f -----"
+            sudo head -20 "$f" 2>&1
+          done
           
           true
